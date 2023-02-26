@@ -429,9 +429,6 @@ func (g *Game) Update() error {
 			g.setNextMode(GameModePlaying)
 
 			audio.NewPlayerFromBytes(audioContext, playStartAudioData).Play()
-
-			bgmPlayer.Rewind()
-			bgmPlayer.Play()
 		}
 	case GameModePlaying:
 		if g.ticksFromModeStart%600 == 0 {
@@ -440,6 +437,11 @@ func (g *Game) Update() error {
 				"ticks":  g.ticksFromModeStart,
 				"score":  g.score,
 			})
+		}
+
+		if g.ticksFromModeStart == 60 {
+			bgmPlayer.Rewind()
+			bgmPlayer.Play()
 		}
 
 		g.score = int(g.ticksFromModeStart)
@@ -731,128 +733,47 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			s.Draw(screen, 1.0)
 		}
 
-		areas := []Area{
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth / 2, y: 200},
-					{x: screenWidth * 2.0 / 5, y: 300},
-					{x: screenWidth * 3.0 / 5, y: 300},
-				}),
-				color: 0,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth / 2, y: 200},
-					{x: screenWidth * 2.0 / 5, y: 300},
-					{x: screenWidth * 1.7 / 5, y: 190},
-				}),
-				color: 1,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth / 2, y: 200},
-					{x: screenWidth / 2, y: 100},
-					{x: screenWidth * 1.7 / 5, y: 190},
-				}),
-				color: 2,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth / 2, y: 200},
-					{x: screenWidth * 3.0 / 5, y: 300},
-					{x: screenWidth * 3.3 / 5, y: 190},
-				}),
-				color: 3,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth / 2, y: 200},
-					{x: screenWidth / 2, y: 100},
-					{x: screenWidth * 3.3 / 5, y: 190},
-				}),
-				color: 0,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 1.2 / 5, y: 250},
-					{x: screenWidth * 2.0 / 5, y: 300},
-					{x: screenWidth * 1.7 / 5, y: 190},
-				}),
-				color: 0,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 1.2 / 5, y: 250},
-					{x: screenWidth * 2.0 / 5, y: 300},
-					{x: screenWidth * 1.0 / 5, y: 320},
-				}),
-				color: 2,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 1.2 / 5, y: 250},
-					{x: screenWidth * 1.1 / 5, y: 150},
-					{x: screenWidth * 1.7 / 5, y: 190},
-				}),
-				color: 3,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 4.0 / 5, y: 210},
-					{x: screenWidth * 3.0 / 5, y: 300},
-					{x: screenWidth * 3.3 / 5, y: 190},
-				}),
-				color: 2,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 4.0 / 5, y: 210},
-					{x: screenWidth * 3.8 / 5, y: 130},
-					{x: screenWidth * 3.3 / 5, y: 190},
-				}),
-				color: 0,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 4.0 / 5, y: 210},
-					{x: screenWidth * 3.8 / 5, y: 130},
-					{x: screenWidth * 4.3 / 5, y: 150},
-				}),
-				color: 1,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 3.8 / 5, y: 130},
-					{x: screenWidth / 2, y: 100},
-					{x: screenWidth * 3.3 / 5, y: 190},
-				}),
-				color: 2,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth / 2, y: 100},
-					{x: screenWidth * 1.1 / 5, y: 150},
-					{x: screenWidth * 1.7 / 5, y: 190},
-				}),
-				color: 1,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 1.2 / 5, y: 250},
-					{x: screenWidth * 1.1 / 5, y: 150},
-					{x: screenWidth * 0.5 / 5, y: 240},
-				}),
-				color: 0,
-			},
-			{
-				Triangle: Triangle([3]Point{
-					{x: screenWidth * 1.2 / 5, y: 250},
-					{x: screenWidth * 1.0 / 5, y: 320},
-					{x: screenWidth * 0.5 / 5, y: 240},
-				}),
-				color: 1,
-			},
+		var areas []Area
+		c := Point{x: screenWidth / 2, y: 200}
+		r := 100.0
+		for i := 0; i < 6; i++ {
+			theta1 := float64(i)*2*math.Pi/6 + math.Pi/2
+			theta2 := float64((i+1)%6)*2*math.Pi/6 + math.Pi/2
+			p1 := c.add(&Point{
+				x: r * math.Cos(theta1),
+				y: r * math.Sin(theta1),
+			})
+			p2 := c.add(&Point{
+				x: r * math.Cos(theta2),
+				y: r * math.Sin(theta2),
+			})
+			areas = append(areas, Area{
+				Triangle: Triangle([3]Point{c, *p1, *p2}),
+				color:    i % 4,
+			})
 		}
+		areas = append(areas, Area{
+			Triangle: Triangle([3]Point{
+				areas[1].Triangle[1],
+				areas[1].Triangle[2],
+				{
+					x: c.x - r*2*math.Sin(math.Pi/3),
+					y: c.y,
+				},
+			}),
+			color: 3,
+		})
+		areas = append(areas, Area{
+			Triangle: Triangle([3]Point{
+				areas[4].Triangle[1],
+				areas[4].Triangle[2],
+				{
+					x: c.x + r*2*math.Sin(math.Pi/3),
+					y: c.y,
+				},
+			}),
+			color: 2,
+		})
 		for _, a := range areas {
 			a.Draw(screen)
 			a.DrawVertices(screen, 1.0)
@@ -1289,45 +1210,6 @@ func (g *Game) initialize() {
 	g.openingLineDrawOrder = g.getLinesWithDrawOrder(g.areas)
 
 	g.setNextMode(GameModeTitle)
-
-	fmt.Println("Seed", seed)
-
-	// seed = 1676638213
-	//
-	// g.areas[0].color = 0
-	// for _, a := range g.areas[0].adjacents {
-	// 	a.color = 1
-	// 	for _, b := range a.adjacents {
-	// 		if b.color == -1 {
-	// 			b.color = 0
-	// 		}
-	// 		for _, c := range b.adjacents {
-	// 			if c.color == -1 {
-	// 				c.color = 1
-	// 			}
-	// 			for _, d := range c.adjacents {
-	// 				if d.color == -1 {
-	// 					d.color = 0
-	// 				}
-	// 				for _, e := range d.adjacents {
-	// 					if e.color == -1 {
-	// 						e.color = 1
-	// 					}
-	// 					for _, f := range e.adjacents {
-	// 						if f.color == -1 {
-	// 							f.color = 0
-	// 						}
-	// 						for _, h := range f.adjacents {
-	// 							if h.color == -1 {
-	// 								h.color = 1
-	// 							}
-	// 						}
-	// 					}
-	// 				}
-	// 			}
-	// 		}
-	// 	}
-	// }
 }
 
 func main() {
