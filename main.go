@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	_ "image/png"
 	"log"
 	"math"
 	"math/rand"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/text"
 	logging "github.com/tsujio/game-logging-server/client"
+	"github.com/tsujio/game-util/drawutil"
 	"github.com/tsujio/game-util/loggingutil"
 	"github.com/tsujio/game-util/resourceutil"
 	"github.com/tsujio/game-util/touchutil"
@@ -29,13 +33,36 @@ const (
 	maxTriangleNum = 30
 )
 
-//go:embed resources/*.ttf resources/*.dat resources/bgm-*.wav resources/secret
+//go:embed resources/*.ttf resources/*.dat resources/bgm-*.wav resources/*.png resources/secret
 var resources embed.FS
 
 var (
 	fontL, fontM, fontS = resourceutil.ForceLoadFont(resources, "resources/PressStart2P-Regular.ttf", nil)
 	audioContext        = audio.NewContext(48000)
+	color0AudioData     = resourceutil.ForceLoadDecodedAudio(resources, "resources/color-0.wav.dat", audioContext)
+	color1AudioData     = resourceutil.ForceLoadDecodedAudio(resources, "resources/color-1.wav.dat", audioContext)
+	color2AudioData     = resourceutil.ForceLoadDecodedAudio(resources, "resources/color-2.wav.dat", audioContext)
+	color3AudioData     = resourceutil.ForceLoadDecodedAudio(resources, "resources/color-3.wav.dat", audioContext)
+	gameStartAudioData  = resourceutil.ForceLoadDecodedAudio(resources, "resources/魔王魂 効果音 システム49.mp3.dat", audioContext)
+	playStartAudioData  = resourceutil.ForceLoadDecodedAudio(resources, "resources/魔王魂 効果音 笛01.mp3.dat", audioContext)
+	completeAudioData   = resourceutil.ForceLoadDecodedAudio(resources, "resources/魔王魂 効果音 物音15.mp3.dat", audioContext)
+	bgmPlayer           = resourceutil.ForceCreateBGMPlayer(resources, "resources/bgm-four-color-theorem.wav", audioContext)
+	skyImg              = loadImage("resources/sky.png")
+	surfaceImg          = loadImage("resources/surface.png")
 )
+
+func loadImage(path string) *ebiten.Image {
+	f, err := resources.Open(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return ebiten.NewImageFromImage(img)
+}
 
 type Point struct {
 	x, y float64
@@ -144,6 +171,45 @@ func (t *Triangle) shareLineWith(s *Triangle) bool {
 	return false
 }
 
+func (t *Triangle) collidesWith(s *Triangle) bool {
+	ts := []*Triangle{t, s, t}
+
+	for tsi := 0; tsi < 2; tsi++ {
+		t1 := ts[tsi]
+		t2 := ts[tsi+1]
+
+		for i := 0; i < 3; i++ {
+			v := t1[(i+1)%3].sub(&t1[i%3])
+			sep := &Point{x: v.y, y: -v.x}
+			sep = sep.div(sep.norm())
+
+			t1p1 := sep.innerProd(&t1[i%3])
+			t1p2 := sep.innerProd(&t1[(i+2)%3])
+			t1pMin := math.Min(t1p1, t1p2)
+			t1pMax := math.Max(t1p1, t1p2)
+
+			t2p1 := sep.innerProd(&t2[0])
+			t2p2 := sep.innerProd(&t2[1])
+			t2p3 := sep.innerProd(&t2[2])
+			t2pMin := math.Min(t2p1, t2p2)
+			t2pMin = math.Min(t2pMin, t2p3)
+			t2pMax := math.Max(t2p1, t2p2)
+			t2pMax = math.Max(t2pMax, t2p3)
+
+			if t2pMin <= t1pMin && t1pMin < t2pMax ||
+				t2pMin < t1pMax && t1pMax <= t2pMax ||
+				t1pMin <= t2pMin && t2pMin < t1pMax ||
+				t1pMin < t2pMax && t2pMax <= t1pMax {
+				continue
+			}
+
+			return false
+		}
+	}
+
+	return true
+}
+
 type AreaStatus int
 
 const (
@@ -159,11 +225,53 @@ type Area struct {
 	status    AreaStatus
 }
 
+var vertexImg = drawutil.CreatePatternImage([][]rune{
+	[]rune("  #  "),
+	[]rune("  #  "),
+	[]rune(" ### "),
+	[]rune("#####"),
+	[]rune(" ### "),
+	[]rune("  #  "),
+	[]rune("  #  "),
+}, &drawutil.CreatePatternImageOption[rune]{
+	Color:   color.RGBA{0xf5, 0xdb, 0x49, 0xff},
+	DotSize: 1.5,
+})
+
+func (a *Area) DrawVertices(screen *ebiten.Image, brightness float64) {
+	for _, p := range a.Triangle {
+		opts := &ebiten.DrawImageOptions{}
+		opts.ColorM.Scale(1.0, 1.0, 1.0, brightness)
+		drawutil.DrawImageAt(screen, vertexImg, p.x, p.y, opts)
+	}
+}
+
 var emptyImage = func() *ebiten.Image {
 	img := ebiten.NewImage(3, 3)
 	img.Fill(color.White)
 	return img
 }()
+
+func (a *Area) getColorScales() (r, g, b, alpha float32) {
+	switch a.color {
+	case -1:
+		alpha = 0.0
+	case 0:
+		r = 1.0
+		alpha = 0.3
+	case 1:
+		g = 1.0
+		alpha = 0.3
+	case 2:
+		b = 1.0
+		alpha = 0.3
+	case 3:
+		r = 1.0
+		g = 1.0
+		alpha = 0.3
+	}
+	return
+}
 
 func (a *Area) Draw(screen *ebiten.Image) {
 	var vertices []ebiten.Vertex
@@ -174,32 +282,45 @@ func (a *Area) Draw(screen *ebiten.Image) {
 			SrcX: 0,
 			SrcY: 0,
 		}
-		switch a.color {
-		case -1:
-			v.ColorA = 0.0
-		case 0:
-			v.ColorR = 1.0
-			v.ColorA = 0.3
-		case 1:
-			v.ColorG = 1.0
-			v.ColorA = 0.3
-		case 2:
-			v.ColorB = 1.0
-			v.ColorA = 0.3
-		case 3:
-			v.ColorR = 1.0
-			v.ColorG = 1.0
-			v.ColorA = 0.3
-		}
+		v.ColorR, v.ColorG, v.ColorB, v.ColorA = a.getColorScales()
 		vertices = append(vertices, v)
 	}
 	indices := []uint16{0, 1, 2}
 	op := &ebiten.DrawTrianglesOptions{}
 	screen.DrawTriangles(vertices, indices, emptyImage.SubImage(image.Rect(1, 1, 2, 2)).(*ebiten.Image), op)
+}
 
-	ebitenutil.DrawLine(screen, a.Triangle[0].x, a.Triangle[0].y, a.Triangle[1].x, a.Triangle[1].y, color.White)
-	ebitenutil.DrawLine(screen, a.Triangle[1].x, a.Triangle[1].y, a.Triangle[2].x, a.Triangle[2].y, color.White)
-	ebitenutil.DrawLine(screen, a.Triangle[2].x, a.Triangle[2].y, a.Triangle[0].x, a.Triangle[0].y, color.White)
+type TriangleEffect struct {
+	Triangle
+	ticks                  uint64
+	colorR, colorG, colorB float32
+}
+
+func (e *TriangleEffect) Update() {
+	e.ticks++
+}
+
+func (e *TriangleEffect) Draw(screen *ebiten.Image) {
+	scale := 1.1 + float64(e.ticks)/60
+	alpha := 0.2 * (1.0 - float32(e.ticks)/60)
+
+	center := e.Triangle[0].add(&e.Triangle[1]).add(&e.Triangle[2]).div(3)
+
+	var vertices []ebiten.Vertex
+	for i := 0; i < 3; i++ {
+		p := e.Triangle[i].sub(center).mul(scale).add(center)
+		v := ebiten.Vertex{
+			DstX: float32(p.x),
+			DstY: float32(p.y),
+			SrcX: 0,
+			SrcY: 0,
+		}
+		v.ColorR, v.ColorG, v.ColorB, v.ColorA = e.colorR, e.colorG, e.colorB, alpha
+		vertices = append(vertices, v)
+	}
+	indices := []uint16{0, 1, 2}
+	op := &ebiten.DrawTrianglesOptions{}
+	screen.DrawTriangles(vertices, indices, emptyImage.SubImage(image.Rect(1, 1, 2, 2)).(*ebiten.Image), op)
 }
 
 type Star struct {
@@ -207,8 +328,31 @@ type Star struct {
 	r float64
 }
 
-func (s *Star) Draw(screen *ebiten.Image) {
-	ebitenutil.DrawCircle(screen, s.x, s.y, s.r, color.White)
+func (s *Star) Draw(screen *ebiten.Image, brightness float64) {
+	ebitenutil.DrawCircle(screen, s.x, s.y, s.r, color.RGBA{0xff, 0xff, 0xff, uint8(0xff * brightness)})
+}
+
+type ShootingStar struct {
+	Point
+	r      float64
+	vx, vy float64
+	ticks  uint64
+}
+
+func (s *ShootingStar) Update() {
+	s.ticks++
+	s.x += s.vx
+	s.y += s.vy
+}
+
+func (s *ShootingStar) Draw(screen *ebiten.Image) {
+	ts := math.Min(float64(s.ticks), 30)
+	te := math.Max(float64(s.ticks)-30, 0)
+	ebitenutil.DrawLine(screen, s.x-s.vx*ts, s.y-s.vy*ts, s.x-s.vx*te, s.y-s.vy*te, color.RGBA{0xff, 0xff, 0xff, 0x30})
+
+	if s.ticks < 30 {
+		ebitenutil.DrawCircle(screen, s.x, s.y, s.r, color.RGBA{0xff, 0xff, 0xff, 0x7a})
+	}
 }
 
 type GameMode int
@@ -233,7 +377,9 @@ type Game struct {
 	rankingCh            <-chan []logging.GameScore
 	ranking              []logging.GameScore
 	stars                []Star
+	shootingStars        []ShootingStar
 	areas                []Area
+	triangleEffects      []TriangleEffect
 	openingLineDrawOrder [][]Line
 }
 
@@ -252,10 +398,40 @@ func (g *Game) Update() error {
 			loggingutil.SendLog(gameName, g.playerID, g.playID, map[string]interface{}{
 				"action": "start_game",
 			})
+
+			audio.NewPlayerFromBytes(audioContext, gameStartAudioData).Play()
 		}
 	case GameModeOpening:
-		if g.ticksFromModeStart > 5*60 {
+		if g.random.Int()%120 == 0 {
+			g.shootingStars = append(g.shootingStars, ShootingStar{
+				Point: Point{
+					x: screenWidth * g.random.Float64(),
+					y: screenHeight * g.random.Float64(),
+				},
+				r:  2.0,
+				vx: -3.0,
+				vy: 3.0,
+			})
+		}
+
+		var newShootingStars []ShootingStar
+		for i := range g.shootingStars {
+			s := &g.shootingStars[i]
+			s.Update()
+
+			if s.ticks < 60 {
+				newShootingStars = append(newShootingStars, *s)
+			}
+		}
+		g.shootingStars = newShootingStars
+
+		if g.ticksFromModeStart > 10*60 {
 			g.setNextMode(GameModePlaying)
+
+			audio.NewPlayerFromBytes(audioContext, playStartAudioData).Play()
+
+			bgmPlayer.Rewind()
+			bgmPlayer.Play()
 		}
 	case GameModePlaying:
 		if g.ticksFromModeStart%600 == 0 {
@@ -266,16 +442,73 @@ func (g *Game) Update() error {
 			})
 		}
 
+		g.score = int(g.ticksFromModeStart)
+
 		if g.touchContext.IsJustTouched() {
 			pos := g.touchContext.GetTouchPosition()
 			for i := range g.areas {
 				a := &g.areas[i]
 				if a.Triangle.covers(&Point{x: float64(pos.X), y: float64(pos.Y)}) {
 					a.color = (a.color + 1) % 4
+
+					cr, cg, cb, _ := a.getColorScales()
+					e := TriangleEffect{
+						Triangle: a.Triangle,
+						colorR:   cr,
+						colorG:   cg,
+						colorB:   cb,
+					}
+					g.triangleEffects = append(g.triangleEffects, e)
+
+					switch a.color {
+					case 0:
+						audio.NewPlayerFromBytes(audioContext, color0AudioData).Play()
+					case 1:
+						audio.NewPlayerFromBytes(audioContext, color1AudioData).Play()
+					case 2:
+						audio.NewPlayerFromBytes(audioContext, color2AudioData).Play()
+					case 3:
+						audio.NewPlayerFromBytes(audioContext, color3AudioData).Play()
+					}
+
 					break
 				}
 			}
 		}
+
+		if g.random.Int()%120 == 0 {
+			g.shootingStars = append(g.shootingStars, ShootingStar{
+				Point: Point{
+					x: screenWidth * g.random.Float64(),
+					y: screenHeight * g.random.Float64(),
+				},
+				r:  2.0,
+				vx: -3.0,
+				vy: 3.0,
+			})
+		}
+
+		var newTriangleEffects []TriangleEffect
+		for i := range g.triangleEffects {
+			e := &g.triangleEffects[i]
+			e.Update()
+
+			if e.ticks < 10 {
+				newTriangleEffects = append(newTriangleEffects, *e)
+			}
+		}
+		g.triangleEffects = newTriangleEffects
+
+		var newShootingStars []ShootingStar
+		for i := range g.shootingStars {
+			s := &g.shootingStars[i]
+			s.Update()
+
+			if s.ticks < 60 {
+				newShootingStars = append(newShootingStars, *s)
+			}
+		}
+		g.shootingStars = newShootingStars
 
 		allOK := true
 		for i := range g.areas {
@@ -301,44 +534,156 @@ func (g *Game) Update() error {
 				"score":  g.score,
 			})
 
+			g.triangleEffects = nil
+			for _, a := range g.areas {
+				cr, cg, cb, _ := a.getColorScales()
+				e := TriangleEffect{
+					Triangle: a.Triangle,
+					colorR:   cr,
+					colorG:   cg,
+					colorB:   cb,
+				}
+				g.triangleEffects = append(g.triangleEffects, e)
+			}
+
 			g.setNextMode(GameModeGameOver)
 
 			g.rankingCh = loggingutil.RegisterScoreToRankingAsync(gameName, g.playerID, g.playID, g.score)
+
+			audio.NewPlayerFromBytes(audioContext, completeAudioData).Play()
 		}
 	case GameModeGameOver:
-		if g.ticksFromModeStart > 60 && g.touchContext.IsJustTouched() {
-			select {
-			case g.ranking = <-g.rankingCh:
-			default:
-			}
+		if g.random.Int()%30 == 0 {
+			g.shootingStars = append(g.shootingStars, ShootingStar{
+				Point: Point{
+					x: screenWidth * g.random.Float64(),
+					y: screenHeight * g.random.Float64(),
+				},
+				r:  2.0,
+				vx: -3.0,
+				vy: 3.0,
+			})
+		}
 
-			if len(g.ranking) > 0 {
-				g.setNextMode(GameModeRanking)
-			} else {
-				g.initialize()
+		var newTriangleEffects []TriangleEffect
+		for i := range g.triangleEffects {
+			e := &g.triangleEffects[i]
+			e.Update()
+
+			if e.ticks < 60 {
+				newTriangleEffects = append(newTriangleEffects, *e)
 			}
 		}
-	case GameModeRanking:
-		if len(g.ranking) == 0 || g.ticksFromModeStart > 60 && g.touchContext.IsJustTouched() {
+		g.triangleEffects = newTriangleEffects
+
+		var newShootingStars []ShootingStar
+		for i := range g.shootingStars {
+			s := &g.shootingStars[i]
+			s.Update()
+
+			if s.ticks < 60 {
+				newShootingStars = append(newShootingStars, *s)
+			}
+		}
+		g.shootingStars = newShootingStars
+
+		if g.ticksFromModeStart > 60 && g.touchContext.IsJustTouched() {
 			g.initialize()
+			bgmPlayer.Pause()
 		}
 	}
 
 	return nil
 }
 
-func (g *Game) Draw(screen *ebiten.Image) {
-	screen.Fill(color.Black)
+func (g *Game) drawSky(screen *ebiten.Image) {
+	opts := &ebiten.DrawImageOptions{}
+	screen.DrawImage(skyImg, opts)
+}
 
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("%.1f", ebiten.ActualFPS()))
+func (g *Game) drawSurface(screen *ebiten.Image) {
+	opts := &ebiten.DrawImageOptions{}
+	screen.DrawImage(surfaceImg, opts)
+}
 
-	switch g.mode {
-	case GameModeOpening:
+func (g *Game) drawTitle(screen *ebiten.Image) {
+	text.Draw(screen, "FOUR", fontL.Face, 25, 75, color.White)
+	text.Draw(screen, "COLOR", fontL.Face, 185, 75, color.White)
+	text.Draw(screen, "THEOREM", fontL.Face, 370, 75, color.White)
+
+	usageTexts := []string{"[TAP] Change color"}
+	for i, s := range usageTexts {
+		text.Draw(screen, s, fontS.Face, screenWidth/2-len(s)*int(fontS.FaceOptions.Size)/2, 350+i*int(fontS.FaceOptions.Size*1.8), color.White)
+	}
+
+	creditTexts := []string{"CREATOR: NAOKI TSUJIO", "FONT: Press Start 2P by CodeMan38", "SOUND EFFECT: MaouDamashii"}
+	for i, s := range creditTexts {
+		text.Draw(screen, s, fontS.Face, screenWidth/2-len(s)*int(fontS.FaceOptions.Size)/2, 420+i*int(fontS.FaceOptions.Size*1.8), color.White)
+	}
+}
+
+func (g *Game) drawProgress(screen *ebiten.Image) {
+	progress := 0.0
+	for _, a := range g.areas {
+		if a.color != -1 {
+			ng := false
+			for _, ad := range a.adjacents {
+				if a.color == ad.color {
+					ng = true
+					break
+				}
+			}
+			if !ng {
+				progress += 1.0
+			}
+		}
+	}
+	progress /= float64(len(g.areas))
+
+	t := fmt.Sprintf("%d%%", int(math.Floor(progress*100)))
+	text.Draw(screen, t, fontS.Face, screenWidth-len(t)*int(fontS.FaceOptions.Size)-10, 20, color.White)
+}
+
+func (g *Game) drawOpening(screen *ebiten.Image) {
+	if g.ticksFromModeStart < 60 {
+		g.drawSurface(screen)
+	} else if g.ticksFromModeStart < 360 {
+		ticks := g.ticksFromModeStart - 60
+
+		starBrightness := math.Min(float64(ticks)/150, 1.0)
+
 		for _, s := range g.stars {
+			s.Draw(screen, starBrightness)
+		}
+
+		for _, s := range g.shootingStars {
 			s.Draw(screen)
 		}
 
-		index := int(g.ticksFromModeStart / 60)
+		vertexBrightness := math.Max((float64(ticks)-150)/150, 0.0)
+		for _, a := range g.areas {
+			a.DrawVertices(screen, vertexBrightness)
+		}
+
+		g.drawSurface(screen)
+	} else {
+		ticks := int(g.ticksFromModeStart - 360)
+
+		for _, s := range g.stars {
+			s.Draw(screen, 1.0)
+		}
+
+		for _, s := range g.shootingStars {
+			s.Draw(screen)
+		}
+
+		for _, a := range g.areas {
+			a.DrawVertices(screen, 1.0)
+		}
+
+		ticksPerIndex := (600 - 360) / len(g.openingLineDrawOrder)
+
+		index := int(ticks / ticksPerIndex)
 		if index > len(g.openingLineDrawOrder) {
 			index = len(g.openingLineDrawOrder)
 		}
@@ -350,19 +695,240 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		if index < len(g.openingLineDrawOrder) {
 			for _, l := range g.openingLineDrawOrder[index] {
 				v := l[1].sub(&l[0])
-				v = v.mul(float64(g.ticksFromModeStart%60) / 60)
+				v = v.mul(float64(ticks%ticksPerIndex) / float64(ticksPerIndex))
 				p := l[0].add(v)
 				ebitenutil.DrawLine(screen, l[0].x, l[0].y, p.x, p.y, color.White)
 			}
 		}
-	default:
+
+		g.drawSurface(screen)
+	}
+}
+
+func (g *Game) drawScore(screen *ebiten.Image) {
+	secs := g.score / 60
+	s := fmt.Sprintf("%d:%02d", secs/60, secs%60)
+	text.Draw(screen, s, fontS.Face, screenWidth/2-len(s)*int(fontS.FaceOptions.Size)/2, 20, color.White)
+}
+
+func (g *Game) drawGameOver(screen *ebiten.Image) {
+	var s string
+
+	s = "Complete!"
+	text.Draw(screen, s, fontS.Face, screenWidth/2-len(s)*int(fontS.FaceOptions.Size)/2, 400, color.White)
+
+	secs := g.score / 60
+	s = fmt.Sprintf("Your time is %d:%02d", secs/60, secs%60)
+	text.Draw(screen, s, fontS.Face, screenWidth/2-len(s)*int(fontS.FaceOptions.Size)/2, 420, color.White)
+}
+
+func (g *Game) Draw(screen *ebiten.Image) {
+	g.drawSky(screen)
+
+	switch g.mode {
+	case GameModeTitle:
 		for _, s := range g.stars {
+			s.Draw(screen, 1.0)
+		}
+
+		areas := []Area{
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth / 2, y: 200},
+					{x: screenWidth * 2.0 / 5, y: 300},
+					{x: screenWidth * 3.0 / 5, y: 300},
+				}),
+				color: 0,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth / 2, y: 200},
+					{x: screenWidth * 2.0 / 5, y: 300},
+					{x: screenWidth * 1.7 / 5, y: 190},
+				}),
+				color: 1,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth / 2, y: 200},
+					{x: screenWidth / 2, y: 100},
+					{x: screenWidth * 1.7 / 5, y: 190},
+				}),
+				color: 2,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth / 2, y: 200},
+					{x: screenWidth * 3.0 / 5, y: 300},
+					{x: screenWidth * 3.3 / 5, y: 190},
+				}),
+				color: 3,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth / 2, y: 200},
+					{x: screenWidth / 2, y: 100},
+					{x: screenWidth * 3.3 / 5, y: 190},
+				}),
+				color: 0,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 1.2 / 5, y: 250},
+					{x: screenWidth * 2.0 / 5, y: 300},
+					{x: screenWidth * 1.7 / 5, y: 190},
+				}),
+				color: 0,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 1.2 / 5, y: 250},
+					{x: screenWidth * 2.0 / 5, y: 300},
+					{x: screenWidth * 1.0 / 5, y: 320},
+				}),
+				color: 2,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 1.2 / 5, y: 250},
+					{x: screenWidth * 1.1 / 5, y: 150},
+					{x: screenWidth * 1.7 / 5, y: 190},
+				}),
+				color: 3,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 4.0 / 5, y: 210},
+					{x: screenWidth * 3.0 / 5, y: 300},
+					{x: screenWidth * 3.3 / 5, y: 190},
+				}),
+				color: 2,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 4.0 / 5, y: 210},
+					{x: screenWidth * 3.8 / 5, y: 130},
+					{x: screenWidth * 3.3 / 5, y: 190},
+				}),
+				color: 0,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 4.0 / 5, y: 210},
+					{x: screenWidth * 3.8 / 5, y: 130},
+					{x: screenWidth * 4.3 / 5, y: 150},
+				}),
+				color: 1,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 3.8 / 5, y: 130},
+					{x: screenWidth / 2, y: 100},
+					{x: screenWidth * 3.3 / 5, y: 190},
+				}),
+				color: 2,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth / 2, y: 100},
+					{x: screenWidth * 1.1 / 5, y: 150},
+					{x: screenWidth * 1.7 / 5, y: 190},
+				}),
+				color: 1,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 1.2 / 5, y: 250},
+					{x: screenWidth * 1.1 / 5, y: 150},
+					{x: screenWidth * 0.5 / 5, y: 240},
+				}),
+				color: 0,
+			},
+			{
+				Triangle: Triangle([3]Point{
+					{x: screenWidth * 1.2 / 5, y: 250},
+					{x: screenWidth * 1.0 / 5, y: 320},
+					{x: screenWidth * 0.5 / 5, y: 240},
+				}),
+				color: 1,
+			},
+		}
+		for _, a := range areas {
+			a.Draw(screen)
+			a.DrawVertices(screen, 1.0)
+		}
+
+		for _, lines := range g.getLinesWithDrawOrder(areas) {
+			for _, line := range lines {
+				ebitenutil.DrawLine(screen, line[0].x, line[0].y, line[1].x, line[1].y, color.White)
+			}
+		}
+
+		g.drawSurface(screen)
+
+		g.drawTitle(screen)
+	case GameModeOpening:
+		g.drawOpening(screen)
+	case GameModePlaying:
+		for _, s := range g.stars {
+			s.Draw(screen, 1.0)
+		}
+
+		for _, s := range g.shootingStars {
 			s.Draw(screen)
 		}
 
 		for _, a := range g.areas {
 			a.Draw(screen)
+			a.DrawVertices(screen, 1.0)
 		}
+
+		for _, lines := range g.openingLineDrawOrder {
+			for _, line := range lines {
+				ebitenutil.DrawLine(screen, line[0].x, line[0].y, line[1].x, line[1].y, color.White)
+			}
+		}
+
+		for _, e := range g.triangleEffects {
+			e.Draw(screen)
+		}
+
+		g.drawSurface(screen)
+
+		g.drawProgress(screen)
+
+		g.drawScore(screen)
+	default:
+		for _, s := range g.stars {
+			s.Draw(screen, 1.0)
+		}
+
+		for _, s := range g.shootingStars {
+			s.Draw(screen)
+		}
+
+		for _, a := range g.areas {
+			a.Draw(screen)
+			a.DrawVertices(screen, 1.0)
+		}
+
+		for _, lines := range g.openingLineDrawOrder {
+			for _, line := range lines {
+				ebitenutil.DrawLine(screen, line[0].x, line[0].y, line[1].x, line[1].y, color.White)
+			}
+		}
+
+		for _, e := range g.triangleEffects {
+			e.Draw(screen)
+		}
+
+		g.drawSurface(screen)
+
+		g.drawProgress(screen)
+
+		g.drawScore(screen)
+
+		g.drawGameOver(screen)
 	}
 }
 
@@ -376,12 +942,10 @@ func (g *Game) setNextMode(mode GameMode) {
 }
 
 func (g *Game) generateTriangles(seed *Triangle) []Triangle {
-	findLineToExtend := func(triangles []Triangle) (*Line, *Triangle) {
-		var line *Line
-		var pair *Triangle
-
-		center := Point{x: screenWidth / 2, y: screenHeight / 2}
-
+	findLinesToExtend := func(triangles []Triangle) (lines []struct {
+		line *Line
+		pair *Triangle
+	}) {
 		for _, t := range triangles {
 			for i := 0; i < 3; i++ {
 				l := Line([2]Point{t[i%3], t[(i+1)%3]})
@@ -399,21 +963,30 @@ func (g *Game) generateTriangles(seed *Triangle) []Triangle {
 					continue
 				}
 
-				if l[0].x < 50 || l[0].x > screenWidth-50 ||
-					l[0].y < 50 || l[0].y > screenHeight-150 ||
-					l[1].x < 50 || l[1].x > screenWidth-50 ||
-					l[1].y < 50 || l[1].y > screenHeight-150 {
+				found := false
+				for _, item := range lines {
+					if item.line.equals(&l) {
+						found = true
+						break
+					}
+				}
+				if found {
 					continue
 				}
 
-				if line == nil || l.distanceSq(&center) < line.distanceSq(&center) {
-					line = &l
-					pair = &trs[0]
-				}
+				lines = append(lines, struct {
+					line *Line
+					pair *Triangle
+				}{line: &l, pair: &trs[0]})
 			}
 		}
 
-		return line, pair
+		center := Point{x: screenWidth / 2, y: screenHeight / 2}
+		sort.Slice(lines, func(i, j int) bool {
+			return lines[i].line.distanceSq(&center) < lines[j].line.distanceSq(&center)
+		})
+
+		return
 	}
 
 	extendLine := func(triangles []Triangle, line *Line, pair *Triangle) *Triangle {
@@ -440,25 +1013,24 @@ func (g *Game) generateTriangles(seed *Triangle) []Triangle {
 		newPoint.x = math.Max(newPoint.x, 5)
 		newPoint.x = math.Min(newPoint.x, screenWidth-5)
 		newPoint.y = math.Max(newPoint.y, 5)
-		newPoint.y = math.Min(newPoint.y, screenHeight-5)
-
-		// Ensure the new triangle does not cross over existing triangles
-		l1 := Line([2]Point{*newPoint, line[0]})
-		l2 := Line([2]Point{*newPoint, line[1]})
-		for _, t := range triangles {
-			for i := 0; i < 3; i++ {
-				l := Line([2]Point{t[i%3], t[(i+1)%3]})
-				if l1[1] != l[0] && l1[1] != l[1] && l1.cross(&l) ||
-					l2[1] != l[0] && l2[1] != l[1] && l2.cross(&l) {
-					return nil
-				}
-			}
-		}
+		newPoint.y = math.Min(newPoint.y, screenHeight-120)
 
 		triangle := Triangle{
 			line[0],
 			line[1],
 			*newPoint,
+		}
+
+		// Ensure the new triangle does not collide with existing ones
+		collide := false
+		for _, t := range triangles {
+			if t.equals(&triangle) || t.collidesWith(&triangle) {
+				collide = true
+				break
+			}
+		}
+		if collide {
+			return nil
 		}
 
 		// Ensure the new triangle has sufficient angles
@@ -517,28 +1089,14 @@ func (g *Game) generateTriangles(seed *Triangle) []Triangle {
 							continue
 						}
 
-						// Ensure the new triangle does not coss over existing triangles
+						// Ensure the new triangle does not collide with existing ones
 						collide := false
-						line := Line([2]Point{newTriangle[1], newTriangle[2]})
 						var trs []Triangle
 						trs = append(trs, triangles...)
 						trs = append(trs, newTriangles...)
 						for _, t := range trs {
-							if newTriangle.equals(&t) {
+							if t.equals(&newTriangle) || t.collidesWith(&newTriangle) {
 								collide = true
-								break
-							}
-							for i := 0; i < 3; i++ {
-								l := Line([2]Point{t[i%3], t[(i+1)%3]})
-								if line[0] == l[0] || line[0] == l[1] || line[1] == l[0] || line[1] == l[1] {
-									continue
-								}
-								if line.cross(&l) {
-									collide = true
-									break
-								}
-							}
-							if collide {
 								break
 							}
 						}
@@ -571,23 +1129,31 @@ func (g *Game) generateTriangles(seed *Triangle) []Triangle {
 			break
 		}
 
-		line, pair := findLineToExtend(triangles)
-		if line == nil {
+		lines := findLinesToExtend(triangles)
+		if len(lines) == 0 {
 			break
 		}
 
 		found := false
-		for retry := 0; retry < 3; retry++ {
-			if t := extendLine(triangles, line, pair); t != nil {
-				found = true
-				triangles = append(triangles, *t)
+		for _, line := range lines {
+			for retry := 0; retry < 3; retry++ {
+				if t := extendLine(triangles, line.line, line.pair); t != nil {
+					found = true
+					triangles = append(triangles, *t)
+					break
+				}
+			}
+			if found {
 				break
 			}
 		}
 
 		if !found {
-			triangles = triangles[:1]
-			continue
+			if len(triangles) < 10 {
+				continue
+			}
+
+			break
 		}
 
 		if newTriangles := getNewTrianglesFromExistingPoints(triangles); newTriangles == nil {
@@ -599,6 +1165,60 @@ func (g *Game) generateTriangles(seed *Triangle) []Triangle {
 	}
 
 	return triangles
+}
+
+func (g *Game) getLinesWithDrawOrder(areas []Area) [][]Line {
+	var linesList [][]Line
+
+	t0 := areas[0].Triangle
+	linesList = append(linesList, []Line{
+		Line([2]Point{t0[0], t0[1]}),
+		Line([2]Point{t0[1], t0[2]}),
+		Line([2]Point{t0[2], t0[0]}),
+	})
+
+	lineExists := func(line *Line, linesList [][]Line, newLines []Line) bool {
+		for _, ls := range linesList {
+			for _, l := range ls {
+				if l.equals(line) {
+					return true
+				}
+			}
+		}
+		for _, l := range newLines {
+			if l.equals(line) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for {
+		lines := linesList[len(linesList)-1]
+		var newLines []Line
+		for _, a := range areas {
+			for i := 0; i < 3; i++ {
+				for _, line := range lines {
+					if line[1] == a.Triangle[i] {
+						l1 := Line([2]Point{a.Triangle[i], a.Triangle[(i+1)%3]})
+						l2 := Line([2]Point{a.Triangle[i], a.Triangle[(i+2)%3]})
+						if !lineExists(&l1, linesList, newLines) {
+							newLines = append(newLines, l1)
+						}
+						if !lineExists(&l2, linesList, newLines) {
+							newLines = append(newLines, l2)
+						}
+					}
+				}
+			}
+		}
+		if len(newLines) == 0 {
+			break
+		}
+		linesList = append(linesList, newLines)
+	}
+
+	return linesList
 }
 
 func (g *Game) initialize() {
@@ -625,16 +1245,18 @@ func (g *Game) initialize() {
 	g.rankingCh = nil
 	g.ranking = nil
 	g.stars = nil
+	g.shootingStars = nil
 	g.areas = nil
+	g.triangleEffects = nil
 	g.openingLineDrawOrder = nil
 
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 500; i++ {
 		g.stars = append(g.stars, Star{
 			Point: Point{
 				x: screenWidth * g.random.Float64(),
-				y: screenHeight * g.random.Float64(),
+				y: (screenHeight - 50) * g.random.Float64(),
 			},
-			r: 1.0 + 0.5*g.random.NormFloat64(),
+			r: math.Max(1.0+0.5*g.random.NormFloat64(), 0.5),
 		})
 	}
 
@@ -664,52 +1286,48 @@ func (g *Game) initialize() {
 		}
 	}
 
-	g.openingLineDrawOrder = [][]Line{{
-		Line([2]Point{t0[0], t0[1]}),
-		Line([2]Point{t0[1], t0[2]}),
-		Line([2]Point{t0[2], t0[0]}),
-	}}
-	lineExists := func(line *Line, openingLineDrawOrder [][]Line, newLines []Line) bool {
-		for _, ls := range openingLineDrawOrder {
-			for _, l := range ls {
-				if l.equals(line) {
-					return true
-				}
-			}
-		}
-		for _, l := range newLines {
-			if l.equals(line) {
-				return true
-			}
-		}
-		return false
-	}
-	for {
-		lines := g.openingLineDrawOrder[len(g.openingLineDrawOrder)-1]
-		var newLines []Line
-		for _, a := range g.areas {
-			for i := 0; i < 3; i++ {
-				for _, line := range lines {
-					if line[1] == a.Triangle[i] {
-						l1 := Line([2]Point{a.Triangle[i], a.Triangle[(i+1)%3]})
-						l2 := Line([2]Point{a.Triangle[i], a.Triangle[(i+2)%3]})
-						if !lineExists(&l1, g.openingLineDrawOrder, newLines) {
-							newLines = append(newLines, l1)
-						}
-						if !lineExists(&l2, g.openingLineDrawOrder, newLines) {
-							newLines = append(newLines, l2)
-						}
-					}
-				}
-			}
-		}
-		if len(newLines) == 0 {
-			break
-		}
-		g.openingLineDrawOrder = append(g.openingLineDrawOrder, newLines)
-	}
+	g.openingLineDrawOrder = g.getLinesWithDrawOrder(g.areas)
 
 	g.setNextMode(GameModeTitle)
+
+	fmt.Println("Seed", seed)
+
+	// seed = 1676638213
+	//
+	// g.areas[0].color = 0
+	// for _, a := range g.areas[0].adjacents {
+	// 	a.color = 1
+	// 	for _, b := range a.adjacents {
+	// 		if b.color == -1 {
+	// 			b.color = 0
+	// 		}
+	// 		for _, c := range b.adjacents {
+	// 			if c.color == -1 {
+	// 				c.color = 1
+	// 			}
+	// 			for _, d := range c.adjacents {
+	// 				if d.color == -1 {
+	// 					d.color = 0
+	// 				}
+	// 				for _, e := range d.adjacents {
+	// 					if e.color == -1 {
+	// 						e.color = 1
+	// 					}
+	// 					for _, f := range e.adjacents {
+	// 						if f.color == -1 {
+	// 							f.color = 0
+	// 						}
+	// 						for _, h := range f.adjacents {
+	// 							if h.color == -1 {
+	// 								h.color = 1
+	// 							}
+	// 						}
+	// 					}
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
 }
 
 func main() {

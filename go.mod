@@ -14,10 +14,11 @@ require (
 	github.com/jfreymuth/oggvorbis v1.0.4 // indirect
 	github.com/jfreymuth/vorbis v1.0.2 // indirect
 	github.com/tsujio/game-logging-server/client v0.0.0-20230209124752-0a9118f79ee0 // indirect
-	github.com/tsujio/game-util v0.0.0-20230209135225-c4abbc3f06e7 // indirect
+	github.com/tsujio/game-util v0.0.0-20230214010422-a0d510c6ba05 // indirect
 	golang.org/x/exp v0.0.0-20190731235908-ec7cb31e5a56 // indirect
-	golang.org/x/image v0.2.0 // indirect
+	golang.org/x/exp/shiny v0.0.0-20230213192124-5e25df0256eb // indirect
+	golang.org/x/image v0.4.0 // indirect
 	golang.org/x/mobile v0.0.0-20221110043201-43a038452099 // indirect
-	golang.org/x/sys v0.3.0 // indirect
-	golang.org/x/text v0.5.0 // indirect
+	golang.org/x/sys v0.5.0 // indirect
+	golang.org/x/text v0.7.0 // indirect
 )
