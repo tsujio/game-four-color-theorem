@@ -1,0 +1,11 @@
+{
+  "title": "Four Color Theorem",
+  "year": 2023,
+  "description": [
+    "四色定理を題材にしたパズルゲームです。"
+  ],
+  "screen": {
+    "width": 640,
+    "height": 480
+  }
+}
