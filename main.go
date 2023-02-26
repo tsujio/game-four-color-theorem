@@ -323,15 +323,6 @@ func (e *TriangleEffect) Draw(screen *ebiten.Image) {
 	screen.DrawTriangles(vertices, indices, emptyImage.SubImage(image.Rect(1, 1, 2, 2)).(*ebiten.Image), op)
 }
 
-type Star struct {
-	Point
-	r float64
-}
-
-func (s *Star) Draw(screen *ebiten.Image, brightness float64) {
-	ebitenutil.DrawCircle(screen, s.x, s.y, s.r, color.RGBA{0xff, 0xff, 0xff, uint8(0xff * brightness)})
-}
-
 type ShootingStar struct {
 	Point
 	r      float64
@@ -376,7 +367,7 @@ type Game struct {
 	score                int
 	rankingCh            <-chan []logging.GameScore
 	ranking              []logging.GameScore
-	stars                []Star
+	starsImg             *ebiten.Image
 	shootingStars        []ShootingStar
 	areas                []Area
 	triangleEffects      []TriangleEffect
@@ -603,6 +594,12 @@ func (g *Game) drawSky(screen *ebiten.Image) {
 	screen.DrawImage(skyImg, opts)
 }
 
+func (g *Game) drawStars(screen *ebiten.Image, brightness float64) {
+	opts := &ebiten.DrawImageOptions{}
+	opts.ColorM.Translate(0, 0, 0, -1.0+brightness)
+	screen.DrawImage(g.starsImg, opts)
+}
+
 func (g *Game) drawSurface(screen *ebiten.Image) {
 	opts := &ebiten.DrawImageOptions{}
 	screen.DrawImage(surfaceImg, opts)
@@ -653,10 +650,7 @@ func (g *Game) drawOpening(screen *ebiten.Image) {
 		ticks := g.ticksFromModeStart - 60
 
 		starBrightness := math.Min(float64(ticks)/150, 1.0)
-
-		for _, s := range g.stars {
-			s.Draw(screen, starBrightness)
-		}
+		g.drawStars(screen, starBrightness)
 
 		for _, s := range g.shootingStars {
 			s.Draw(screen)
@@ -671,9 +665,7 @@ func (g *Game) drawOpening(screen *ebiten.Image) {
 	} else {
 		ticks := int(g.ticksFromModeStart - 360)
 
-		for _, s := range g.stars {
-			s.Draw(screen, 1.0)
-		}
+		g.drawStars(screen, 1.0)
 
 		for _, s := range g.shootingStars {
 			s.Draw(screen)
@@ -729,9 +721,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	switch g.mode {
 	case GameModeTitle:
-		for _, s := range g.stars {
-			s.Draw(screen, 1.0)
-		}
+		g.drawStars(screen, 1.0)
 
 		var areas []Area
 		c := Point{x: screenWidth / 2, y: 200}
@@ -791,9 +781,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	case GameModeOpening:
 		g.drawOpening(screen)
 	case GameModePlaying:
-		for _, s := range g.stars {
-			s.Draw(screen, 1.0)
-		}
+		g.drawStars(screen, 1.0)
 
 		for _, s := range g.shootingStars {
 			s.Draw(screen)
@@ -820,9 +808,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 		g.drawScore(screen)
 	default:
-		for _, s := range g.stars {
-			s.Draw(screen, 1.0)
-		}
+		g.drawStars(screen, 1.0)
 
 		for _, s := range g.shootingStars {
 			s.Draw(screen)
@@ -1165,20 +1151,21 @@ func (g *Game) initialize() {
 	g.score = 0
 	g.rankingCh = nil
 	g.ranking = nil
-	g.stars = nil
+	g.starsImg = ebiten.NewImage(screenWidth, screenHeight)
 	g.shootingStars = nil
 	g.areas = nil
 	g.triangleEffects = nil
 	g.openingLineDrawOrder = nil
 
+	g.starsImg.Fill(color.Transparent)
 	for i := 0; i < 500; i++ {
-		g.stars = append(g.stars, Star{
-			Point: Point{
-				x: screenWidth * g.random.Float64(),
-				y: (screenHeight - 50) * g.random.Float64(),
-			},
-			r: math.Max(1.0+0.5*g.random.NormFloat64(), 0.5),
-		})
+		ebitenutil.DrawCircle(
+			g.starsImg,
+			screenWidth*g.random.Float64(),
+			(screenHeight-50)*g.random.Float64(),
+			math.Max(1.0+0.5*g.random.NormFloat64(), 0.5),
+			color.White,
+		)
 	}
 
 	t0 := Triangle([3]Point{
